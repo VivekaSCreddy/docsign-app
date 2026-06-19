@@ -16,7 +16,6 @@ const Sign = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pdfDocRef, setPdfDocRef] = useState(null);
-  
 
   useEffect(() => {
     const fetchDoc = async () => {
@@ -39,10 +38,7 @@ const Sign = () => {
       try {
         setPdfLoading(true);
         const pdfjsLib = await import("pdfjs-dist");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url
-).toString();
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
         const loadingTask = pdfjsLib.getDocument({
           url: `${import.meta.env.VITE_API_URL}/api/documents/preview/${id}`,
@@ -185,7 +181,7 @@ const Sign = () => {
         {doc?.status === "signed" ? (
           <div className="bg-green-50 border border-green-200 rounded-xl p-6 text-center">
             <p className="text-green-700 font-semibold text-lg">
-              ✅ This document is already signed
+              This document is already signed
             </p>
             <button
               onClick={() => navigate("/dashboard")}

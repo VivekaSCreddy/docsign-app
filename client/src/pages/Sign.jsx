@@ -8,14 +8,17 @@ const Sign = () => {
   const navigate = useNavigate();
   const canvasRef = useRef();
   const pdfCanvasRef = useRef();
+  const pdfDocRef = useRef(null);
+  const renderTaskRef = useRef(null);
   const [doc, setDoc] = useState(null);
   const [drawing, setDrawing] = useState(false);
   const [signing, setSigning] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
+  const [pdfReady, setPdfReady] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [pdfDocRef, setPdfDocRef] = useState(null);
 
   useEffect(() => {
     const fetchDoc = async () => {
@@ -30,39 +33,55 @@ const Sign = () => {
     fetchDoc();
   }, [id]);
 
-  // Load PDF preview using pdfjs-dist
+  // Load PDF once doc is fetched
   useEffect(() => {
     if (!doc?.originalUrl) return;
-
-    const loadPdf = async () => {
-      try {
-        setPdfLoading(true);
-        const pdfjsLib = await import("pdfjs-dist");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-
-        const loadingTask = pdfjsLib.getDocument({
-          url: `${import.meta.env.VITE_API_URL}/api/documents/preview/${id}`,
-          httpHeaders: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
-        });
-        const pdfDoc = await loadingTask.promise;
-        setPdfDocRef(pdfDoc);
-        setTotalPages(pdfDoc.numPages);
-        await renderPage(pdfDoc, 1);
-      } catch (err) {
-        console.error("PDF load error:", err);
-        toast.error("Could not preview PDF");
-      } finally {
-        setPdfLoading(false);
-      }
-    };
-
     loadPdf();
   }, [doc]);
 
-  const renderPage = async (pdfDoc, pageNum) => {
+  useEffect(() => {
+    if (!pdfReady) return;
+    const timer = setTimeout(() => {
+      renderPage(pdfDocRef.current, 1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [pdfReady]);
+
+  const loadPdf = async () => {
     try {
+      setPdfLoading(true);
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+      const baseURL = API.defaults.baseURL || "http://localhost:5000";
+      const token = localStorage.getItem("token");
+
+      const loadingTask = pdfjsLib.getDocument({
+        url: `${baseURL}/api/documents/preview/${id}`,
+        httpHeaders: { Authorization: `Bearer ${token}` },
+      });
+
+      const pdfDoc = await loadingTask.promise;
+      pdfDocRef.current = pdfDoc;
+      setTotalPages(pdfDoc.numPages);
+      setPdfLoading(false);
+      setPdfReady(true);
+    } catch (err) {
+      console.error("PDF load error:", err);
+      toast.error("Could not preview PDF");
+      setPdfLoading(false);
+    }
+  };
+
+  const renderPage = async (pdfDoc, pageNum) => {
+    if (!pdfDoc) return;
+    try {
+      // Cancel any ongoing render
+      if (renderTaskRef.current) {
+        renderTaskRef.current.cancel();
+        renderTaskRef.current = null;
+      }
+
       const page = await pdfDoc.getPage(pageNum);
       const canvas = pdfCanvasRef.current;
       if (!canvas) return;
@@ -76,17 +95,26 @@ const Sign = () => {
       canvas.height = scaledViewport.height;
 
       const ctx = canvas.getContext("2d");
-      await page.render({ canvasContext: ctx, viewport: scaledViewport })
-        .promise;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      renderTaskRef.current = page.render({
+        canvasContext: ctx,
+        viewport: scaledViewport,
+      });
+      await renderTaskRef.current.promise;
     } catch (err) {
-      console.error("Page render error:", err);
+      if (err?.name !== "RenderingCancelledException") {
+        console.error("Page render error:", err);
+      }
     }
   };
 
   const handlePageChange = async (newPage) => {
-    if (!pdfDocRef || newPage < 1 || newPage > totalPages) return;
+    if (!pdfDocRef.current || newPage < 1 || newPage > totalPages) return;
+    setPageLoading(true);
     setCurrentPage(newPage);
-    await renderPage(pdfDocRef, newPage);
+    await renderPage(pdfDocRef.current, newPage);
+    setPageLoading(false);
   };
 
   // Signature canvas setup
@@ -161,7 +189,6 @@ const Sign = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navbar */}
       <nav className="bg-white shadow px-6 py-4 flex justify-between items-center">
         <h1 className="text-xl font-bold text-indigo-600">DocSign</h1>
         <button
@@ -202,7 +229,7 @@ const Sign = () => {
                   <div className="flex items-center gap-2 text-sm text-gray-500">
                     <button
                       onClick={() => handlePageChange(currentPage - 1)}
-                      disabled={currentPage === 1}
+                      disabled={currentPage === 1 || pageLoading}
                       className="px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
                     >
                       ‹
@@ -212,7 +239,7 @@ const Sign = () => {
                     </span>
                     <button
                       onClick={() => handlePageChange(currentPage + 1)}
-                      disabled={currentPage === totalPages}
+                      disabled={currentPage === totalPages || pageLoading}
                       className="px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
                     >
                       ›
@@ -221,20 +248,28 @@ const Sign = () => {
                 )}
               </div>
 
-              <div className="border rounded-lg overflow-auto max-h-[500px] bg-gray-100 flex items-center justify-center">
-                {pdfLoading ? (
+              <div className="border rounded-lg overflow-auto max-h-[500px] bg-gray-100 flex items-center justify-center relative">
+                {pdfLoading && (
                   <div className="py-16 text-center text-gray-400">
                     <div className="text-4xl mb-2">📄</div>
                     <p>Loading preview...</p>
                   </div>
-                ) : (
-                  <canvas ref={pdfCanvasRef} className="w-full" />
+                )}
+                {/* ✅ Always in DOM once pdfLoading is false, hidden while loading */}
+                <canvas
+                  ref={pdfCanvasRef}
+                  className="w-full"
+                  style={{ display: pdfLoading ? "none" : "block" }}
+                />
+                {pageLoading && (
+                  <div className="absolute inset-0 bg-white bg-opacity-70 flex items-center justify-center">
+                    <p className="text-gray-500 text-sm">Loading page...</p>
+                  </div>
                 )}
               </div>
 
               <p className="text-xs text-gray-400 mt-2 text-center">
-                Your signature will be placed at the bottom-right of the last
-                page
+                Signature will be placed at the bottom-right of the last page
               </p>
             </div>
 
@@ -247,7 +282,6 @@ const Sign = () => {
                 <p className="text-sm text-gray-400 mb-4">
                   Use your mouse or finger to sign below
                 </p>
-
                 <div className="border-2 border-dashed border-gray-300 rounded-lg overflow-hidden mb-4 bg-white">
                   <canvas
                     ref={canvasRef}
@@ -263,8 +297,6 @@ const Sign = () => {
                     onTouchEnd={stopDraw}
                   />
                 </div>
-
-                {/* Signature indicator */}
                 <div
                   className={`text-xs mb-4 text-center font-medium ${
                     hasSignature ? "text-green-600" : "text-gray-400"
@@ -275,7 +307,6 @@ const Sign = () => {
                     : "No signature yet — draw above"}
                 </div>
               </div>
-
               <div className="space-y-3">
                 <button
                   onClick={clearCanvas}

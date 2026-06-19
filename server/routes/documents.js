@@ -120,6 +120,25 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.get('/preview/:id', async (req, res) => {
+  try {
+    const doc = await Document.findOne({ 
+      _id: req.params.id, 
+      userId: req.user.id 
+    });
+    if (!doc) return res.status(404).json({ message: 'Not found' });
+
+    const response = await fetch(doc.originalUrl);
+    const buffer = await response.arrayBuffer();
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.send(Buffer.from(buffer));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const doc = await Document.findOne({ _id: req.params.id, userId: req.user.id });

@@ -6,7 +6,7 @@ const documentSchema = new mongoose.Schema({
   originalUrl: { type: String, required: true },
   signedUrl: { type: String },
   status: { type: String, enum: ['pending', 'signed'], default: 'pending' },
-  verificationId: { type: String, unique: true },
+ verificationId: { type: String, unique: true, sparse: true },
   documentHash: { type: String },
   signedAt: { type: Date },
 }, { timestamps: true });
